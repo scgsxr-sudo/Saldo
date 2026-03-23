@@ -1,70 +1,73 @@
 import streamlit as st
 import pandas as pd
-import os
 from datetime import datetime
 from streamlit_calendar import calendar
 
-st.set_page_config(page_title="Saldo Calendar", page_icon="📅", layout="wide")
+st.set_page_config(page_title="Il Mio Saldo Sicuro", page_icon="💰", layout="wide")
 
-DB_FILE = "dati_portafoglio.csv"
+# --- CONFIGURAZIONE GOOGLE SHEETS ---
+SHEET_ID = "1nWcJ6rwNGRDGLzYItDvXF7Evn5rRMckjavU6uMD2HcQ"
+url = f"https://docs.google.com/spreadsheets/d/{SHEET_ID}/gviz/tq?tqx=out:csv"
 
-# --- CARICAMENTO DATI ---
-if os.path.exists(DB_FILE):
-    df = pd.read_csv(DB_FILE)
-    df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
-    df = df.dropna(subset=['Data'])
+def carica_dati():
+    try:
+        # Leggiamo il CSV dal link pubblico di Google
+        df_sheet = pd.read_csv(url)
+        # Pulizia colonne e date
+        df_sheet.columns = [c.strip() for c in df_sheet.columns]
+        df_sheet['Data'] = pd.to_datetime(df_sheet['Data'], dayfirst=True, errors='coerce')
+        return df_sheet.dropna(subset=['Data'])
+    except Exception as e:
+        return pd.DataFrame(columns=['Data', 'Tipo', 'Categoria', 'Importo', 'Nota'])
+
+df = carica_dati()
+
+st.title("💰 Saldo Permanente (Google Sheets)")
+
+# --- CALCOLO SALDO ---
+if not df.empty:
+    # Convertiamo Importo in numero se non lo è
+    df['Importo'] = pd.to_numeric(df['Importo'], errors='coerce').fillna(0)
+    
+    entrate = df[df['Tipo'].str.contains('Entrata', case=False, na=False)]['Importo'].sum()
+    uscite = df[df['Tipo'].str.contains('Uscita', case=False, na=False)]['Importo'].sum()
+    saldo_totale = entrate - uscite
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("Entrate Totali", f"{entrate:.2f} €")
+    c2.metric("Uscite Totali", f"-{uscite:.2f} €")
+    c3.metric("SALDO ATTUALE", f"{saldo_totale:.2f} €", delta=f"{saldo_totale:.2f} €")
 else:
-    df = pd.DataFrame(columns=['Data', 'Tipo', 'Categoria', 'Importo', 'Nota'])
+    st.warning("Il foglio Google sembra vuoto o non accessibile. Verifica le intestazioni!")
 
-st.title("📅 Mio Calendario Spese")
-
-# --- INSERIMENTO ---
-with st.expander("➕ Aggiungi Movimento"):
-    with st.form("nuovo", clear_on_submit=True):
-        col1, col2, col3 = st.columns(3)
-        d = col1.date_input("Data", datetime.now())
-        t = col2.selectbox("Tipo", ["Uscita", "Entrata"])
-        i = col3.number_input("Euro €", min_value=0.0)
-        c = st.selectbox("Categoria", ["Spesa", "Stipendio", "Casa", "Svago", "Altro"])
-        n = st.text_input("Nota")
-        if st.form_submit_button("Salva"):
-            nuova_riga = pd.DataFrame([[d.strftime('%d/%m/%Y'), t, c, i, n]], 
-                                      columns=['Data', 'Tipo', 'Categoria', 'Importo', 'Nota'])
-            df = pd.concat([df, nuova_riga], ignore_index=True)
-            df.to_csv(DB_FILE, index=False)
-            st.rerun()
-
-# --- PREPARA EVENTI ---
+# --- CALENDARIO ---
+st.subheader("📅 Vista Mensile")
 events = []
-for index, row in df.iterrows():
-    color = "#d9534f" if row['Tipo'] == "Uscita" else "#5cb85c"
+for i, row in df.iterrows():
+    tipo = str(row['Tipo']).strip()
+    color = "#5cb85c" if "Entrata" in tipo else "#d9534f"
+    prefix = "+" if "Entrata" in tipo else "-"
+    
     events.append({
-        "id": str(index),
-        "title": f"{row['Importo']}€ {row['Categoria']}",
+        "title": f"{prefix}{row['Importo']}€ ({row['Categoria']})",
         "start": row['Data'].strftime("%Y-%m-%d"),
         "backgroundColor": color,
+        "borderColor": color
     })
 
-# --- VISUALIZZA CALENDARIO ---
-cal = calendar(events=events, options={"initialView": "dayGridMonth"}, key="cal")
+calendar(events=events, options={"initialView": "dayGridMonth"})
 
-# --- CANCELLAZIONE ---
-if cal.get("eventClick"):
-    idx = int(cal["eventClick"]["event"]["id"])
-    mov = df.iloc[idx]
-    st.error(f"Vuoi eliminare: {mov['Importo']}€ per {mov['Categoria']}?")
-    if st.button("SÌ, ELIMINA"):
-        df = df.drop(df.index[idx])
-        df.to_csv(DB_FILE, index=False)
-        st.rerun()
-
-# --- SALDO ---
+# --- ISTRUZIONI PER SALVARE ---
 st.divider()
-saldo = df[df['Tipo'] == 'Entrata']['Importo'].sum() - df[df['Tipo'] == 'Uscita']['Importo'].sum()
-st.sidebar.metric("SALDO TOTALE", f"{saldo:.2f} €")
-if not df.empty:
-    st.sidebar.write("### Ultimi Movimenti")
-    st.sidebar.dataframe(df.tail(5), hide_index=True)
+with st.expander("ℹ️ Come aggiungere nuovi dati senza perderli"):
+    st.write("""
+    Per far sì che i dati rimangano salvati per sempre, inseriscili direttamente nel tuo **Google Sheets**:
+    1. Apri il tuo link di Google Sheets.
+    2. Aggiungi una riga con: **Data** (es. 25/12/2023), **Tipo** (Entrata o Uscita), **Categoria**, **Importo** e **Nota**.
+    3. Torna qui e ricarica la pagina dell'app: il saldo e il calendario si aggiorneranno da soli!
+    """)
+
+
 
 
 
